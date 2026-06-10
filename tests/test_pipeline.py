@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from profiler import profile
-from cleaner import normalize_dates, strip_dollar
+from cleaner import normalize_dates, strip_dollar, clean_stores, clean_products, clean_transactions
 
 
 # ── Profiler tests ────────────────────────────────────────────────────────────
@@ -110,6 +110,106 @@ class TestCleaner:
         result = strip_dollar(df, "amt")
         assert result["amt"].dtype == float
         assert result["amt"].iloc[1] == pytest.approx(25.00)
+
+
+# ── Cleaner — entity-level data quality tests ────────────────────────────────
+
+class TestCleanerDataQuality:
+    """Tests that verify each documented DQ decision in the data quality table."""
+
+    # --- clean_stores ---
+
+    def test_stores_near_dup_keeps_first(self):
+        """S007-style: same store_id, different names → keep first row."""
+        df = pd.DataFrame([
+            {"store_id": "S007", "store_name": "Store A",         "zip_code": "12345", "region": "NE", "city": None, "state": None, "opened_date": None},
+            {"store_id": "S007", "store_name": "Store A Renamed", "zip_code": "12345", "region": "NE", "city": None, "state": None, "opened_date": None},
+        ])
+        result = clean_stores(df)
+        assert len(result) == 1
+        assert result.iloc[0]["store_name"] == "Store A"
+
+    def test_stores_malformed_zip_kept_with_flag(self):
+        """S003-style: 4-digit zip → row kept, zip_valid=0."""
+        df = pd.DataFrame([{"store_id": "S003", "store_name": "Bad Zip", "zip_code": "0938", "region": "South", "city": None, "state": None, "opened_date": None}])
+        result = clean_stores(df)
+        assert len(result) == 1
+        assert result.iloc[0]["zip_valid"] == 0
+
+    def test_stores_null_region_becomes_unknown(self):
+        """S013/S014-style: NULL region → 'Unknown'."""
+        df = pd.DataFrame([{"store_id": "S013", "store_name": "Portland", "zip_code": "97201", "region": None, "city": None, "state": None, "opened_date": None}])
+        result = clean_stores(df)
+        assert result.iloc[0]["region"] == "Unknown"
+
+    # --- clean_products ---
+
+    def test_products_exact_dup_removed(self):
+        """P012-style: exact duplicate row → deduplicated to one."""
+        row = {"product_id": "P012", "product_name": "Widget", "category": "Tools", "unit_price": 9.99, "supplier_id": "SUP1"}
+        result = clean_products(pd.DataFrame([row, row]))
+        assert len(result) == 1
+
+    def test_products_price_conflict_keeps_last(self):
+        """P005-style: same product_id, two prices → keep last (latest catalog price)."""
+        df = pd.DataFrame([
+            {"product_id": "P005", "product_name": "Gadget", "category": "Electronics", "unit_price": 49.99, "supplier_id": "SUP1"},
+            {"product_id": "P005", "product_name": "Gadget", "category": "Electronics", "unit_price": 59.99, "supplier_id": "SUP1"},
+        ])
+        result = clean_products(df)
+        assert len(result) == 1
+        assert result.iloc[0]["unit_price"] == pytest.approx(59.99)
+
+    def test_products_null_category_becomes_uncategorized(self):
+        """P003-style: NULL category → 'Uncategorized'."""
+        df = pd.DataFrame([{"product_id": "P003", "product_name": "Mystery", "category": None, "unit_price": 5.00, "supplier_id": "SUP1"}])
+        result = clean_products(df)
+        assert result.iloc[0]["category"] == "Uncategorized"
+
+    def test_products_zero_price_kept_with_flag(self):
+        """P027-style: zero unit_price → row kept, price_is_zero=1."""
+        df = pd.DataFrame([{"product_id": "P027", "product_name": "Free Item", "category": "Promo", "unit_price": 0.0, "supplier_id": "SUP1"}])
+        result = clean_products(df)
+        assert len(result) == 1
+        assert result.iloc[0]["price_is_zero"] == 1
+
+    # --- clean_transactions ---
+
+    def test_transactions_orphaned_store_excluded(self):
+        """S016-S019-style: store_id not in valid set → excluded with reason logged."""
+        df = pd.DataFrame([
+            {"transaction_id": "T1", "store_id": "S001", "product_id": "P001", "customer_id": "C1",
+             "transaction_date": "2026-03-01", "quantity": 1, "unit_price": 10.0, "total_amount": 10.0},
+            {"transaction_id": "T2", "store_id": "S999", "product_id": "P001", "customer_id": "C1",
+             "transaction_date": "2026-03-01", "quantity": 1, "unit_price": 10.0, "total_amount": 10.0},
+        ])
+        result, excl = clean_transactions(df, {"S001"}, {"P001"})
+        assert len(result) == 1
+        assert result.iloc[0]["transaction_id"] == "T1"
+        assert any("orphaned_store_id" in e["reason"] for e in excl)
+
+    def test_transactions_null_customer_becomes_guest(self):
+        """NULL customer_id → mapped to synthetic 'CUST_GUEST', row kept."""
+        df = pd.DataFrame([{
+            "transaction_id": "T1", "store_id": "S001", "product_id": "P001",
+            "customer_id": None, "transaction_date": "2026-03-01",
+            "quantity": 1, "unit_price": 10.0, "total_amount": 10.0,
+        }])
+        result, _ = clean_transactions(df, {"S001"}, {"P001"})
+        assert len(result) == 1
+        assert result.iloc[0]["customer_id"] == "CUST_GUEST"
+
+    def test_transactions_return_flagged_and_kept(self):
+        """Negative quantity → is_return=1, row included in output."""
+        df = pd.DataFrame([{
+            "transaction_id": "T1", "store_id": "S001", "product_id": "P001",
+            "customer_id": "C1", "transaction_date": "2026-03-01",
+            "quantity": -2, "unit_price": 10.0, "total_amount": -20.0,
+        }])
+        result, excl = clean_transactions(df, {"S001"}, {"P001"})
+        assert len(result) == 1
+        assert result.iloc[0]["is_return"] == 1
+        assert len(excl) == 0  # returns are kept, not excluded
 
 
 # ── Analytics tests ───────────────────────────────────────────────────────────
