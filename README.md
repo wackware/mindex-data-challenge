@@ -62,6 +62,10 @@ data/raw/
                              │
                              ▼
                      src/analytics.py ──► output/analytics.json
+                                                   │
+                                                   ▼
+                                        scripts/view_output.py  (view.bat)
+                                        human-friendly ASCII table display
 
 src/pipeline.py   ← orchestrates all stages in order
 tests/test_pipeline.py  ← pytest suite (TDD, 25 tests)

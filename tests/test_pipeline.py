@@ -98,18 +98,22 @@ class TestCleaner:
         assert list(result["d"]) == ["2026-01-15", "2026-01-15", "2026-01-15"]
 
     def test_strip_dollar_returns_float(self):
-        """$-prefixed strings should become floats."""
+        """$-prefixed strings should become floats — all 3 values checked."""
         df = pd.DataFrame({"amt": ["$12.50", "$0.99", "$249.00"]})
         result = strip_dollar(df, "amt")
         assert result["amt"].dtype == float
         assert result["amt"].iloc[0] == pytest.approx(12.50)
+        assert result["amt"].iloc[1] == pytest.approx(0.99)
+        assert result["amt"].iloc[2] == pytest.approx(249.00)
 
     def test_strip_dollar_already_numeric(self):
-        """Values without $ prefix should also be handled (mixed column)."""
+        """Mixed column: $-prefixed and plain strings both convert correctly."""
         df = pd.DataFrame({"amt": ["$12.50", "25.00", "$3.99"]})
         result = strip_dollar(df, "amt")
         assert result["amt"].dtype == float
+        assert result["amt"].iloc[0] == pytest.approx(12.50)
         assert result["amt"].iloc[1] == pytest.approx(25.00)
+        assert result["amt"].iloc[2] == pytest.approx(3.99)
 
 
 # ── Cleaner — entity-level data quality tests ────────────────────────────────
@@ -138,10 +142,14 @@ class TestCleanerDataQuality:
         assert result.iloc[0]["zip_code"] == "0938"
 
     def test_stores_null_region_becomes_unknown(self):
-        """S013/S014-style: NULL region → 'Unknown'."""
-        df = pd.DataFrame([{"store_id": "S013", "store_name": "Portland", "zip_code": "97201", "region": None, "city": None, "state": None, "opened_date": None}])
+        """S013/S014-style: NULL region → 'Unknown'; other fields not touched."""
+        df = pd.DataFrame([{"store_id": "S013", "store_name": "Portland", "zip_code": "97201", "region": None, "city": "Portland", "state": "OR", "opened_date": "2019-05-14"}])
         result = clean_stores(df)
         assert result.iloc[0]["region"] == "Unknown"
+        assert result.iloc[0]["store_id"] == "S013"
+        assert result.iloc[0]["store_name"] == "Portland"
+        assert result.iloc[0]["city"] == "Portland"
+        assert result.iloc[0]["state"] == "OR"
 
     # --- clean_products ---
 
