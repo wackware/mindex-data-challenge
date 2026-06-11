@@ -98,13 +98,22 @@ class TestCleaner:
         assert list(result["d"]) == ["2026-01-15", "2026-01-15", "2026-01-15"]
 
     def test_strip_dollar_returns_float(self):
-        """$-prefixed strings should become floats — all 3 values checked."""
+        """$-prefixed strings should become floats — all 3 values checked, no rows dropped."""
         df = pd.DataFrame({"amt": ["$12.50", "$0.99", "$249.00"]})
         result = strip_dollar(df, "amt")
         assert result["amt"].dtype == float
+        assert len(result) == 3
         assert result["amt"].iloc[0] == pytest.approx(12.50)
         assert result["amt"].iloc[1] == pytest.approx(0.99)
         assert result["amt"].iloc[2] == pytest.approx(249.00)
+
+    def test_strip_dollar_zero_amount(self):
+        """$0.00 (P027-style zero-price transaction) strips correctly to 0.0."""
+        df = pd.DataFrame({"amt": ["$0.00", "0.00"]})
+        result = strip_dollar(df, "amt")
+        assert result["amt"].dtype == float
+        assert result["amt"].iloc[0] == pytest.approx(0.0)
+        assert result["amt"].iloc[1] == pytest.approx(0.0)
 
     def test_strip_dollar_already_numeric(self):
         """Mixed column: $-prefixed and plain strings both convert correctly."""
@@ -134,22 +143,37 @@ class TestCleanerDataQuality:
         assert result.iloc[0]["store_name"] == "Store A"
 
     def test_stores_malformed_zip_kept_with_flag(self):
-        """S003-style: 4-digit zip → row kept, zip_valid=0, original value preserved."""
-        df = pd.DataFrame([{"store_id": "S003", "store_name": "Bad Zip", "zip_code": "0938", "region": "South", "city": None, "state": None, "opened_date": None}])
+        """4-digit zip (S003) and 6-digit zip both flagged zip_valid=0; original value preserved."""
+        df = pd.DataFrame([
+            {"store_id": "S003", "store_name": "Short Zip", "zip_code": "0938",  "region": "South", "city": None, "state": None, "opened_date": None},
+            {"store_id": "S099", "store_name": "Long Zip",  "zip_code": "123456", "region": "South", "city": None, "state": None, "opened_date": None},
+        ])
         result = clean_stores(df)
-        assert len(result) == 1
+        assert len(result) == 2
         assert result.iloc[0]["zip_valid"] == 0
         assert result.iloc[0]["zip_code"] == "0938"
+        assert result.iloc[1]["zip_valid"] == 0
+        assert result.iloc[1]["zip_code"] == "123456"
 
     def test_stores_null_region_becomes_unknown(self):
         """S013/S014-style: NULL region → 'Unknown'; fillna must not clobber other columns."""
         df = pd.DataFrame([{"store_id": "S013", "store_name": "Portland", "zip_code": "97201", "region": None, "city": "Portland", "state": "OR", "opened_date": "2019-05-14"}])
         result = clean_stores(df)
         assert result.iloc[0]["region"] == "Unknown"
+        assert result.iloc[0]["zip_valid"] == 1
         assert result.iloc[0]["store_id"] == "S013"
         assert result.iloc[0]["store_name"] == "Portland"
         assert result.iloc[0]["city"] == "Portland"
         assert result.iloc[0]["state"] == "OR"
+
+    def test_stores_multiple_null_regions(self):
+        """Multiple NULL regions (S013/S014 style) all become 'Unknown'."""
+        df = pd.DataFrame([
+            {"store_id": "S013", "store_name": "Cascade Station", "zip_code": "97220", "region": None, "city": "Portland", "state": "OR", "opened_date": None},
+            {"store_id": "S014", "store_name": "Lloyd Center",    "zip_code": "97232", "region": None, "city": "Portland", "state": "OR", "opened_date": None},
+        ])
+        result = clean_stores(df)
+        assert (result["region"] == "Unknown").all()
 
     # --- clean_products ---
 
@@ -202,7 +226,7 @@ class TestCleanerDataQuality:
         assert any("orphaned_store_id" in e["reason"] for e in excl)
 
     def test_transactions_null_customer_becomes_guest(self):
-        """NULL customer_id → mapped to synthetic 'CUST_GUEST', row kept."""
+        """NULL customer_id → mapped to 'CUST_GUEST'; other columns not touched."""
         df = pd.DataFrame([{
             "transaction_id": "T1", "store_id": "S001", "product_id": "P001",
             "customer_id": None, "transaction_date": "2026-03-01",
@@ -211,9 +235,11 @@ class TestCleanerDataQuality:
         result, _ = clean_transactions(df, {"S001"}, {"P001"})
         assert len(result) == 1
         assert result.iloc[0]["customer_id"] == "CUST_GUEST"
+        assert result.iloc[0]["transaction_id"] == "T1"
+        assert result.iloc[0]["store_id"] == "S001"
 
     def test_transactions_return_flagged_and_kept(self):
-        """Negative quantity → is_return=1, row included in output."""
+        """Negative quantity → is_return=1, not excluded, not flagged as price discrepancy."""
         df = pd.DataFrame([{
             "transaction_id": "T1", "store_id": "S001", "product_id": "P001",
             "customer_id": "C1", "transaction_date": "2026-03-01",
@@ -222,6 +248,7 @@ class TestCleanerDataQuality:
         result, excl = clean_transactions(df, {"S001"}, {"P001"})
         assert len(result) == 1
         assert result.iloc[0]["is_return"] == 1
+        assert result.iloc[0]["has_price_discrepancy"] == 0
         assert len(excl) == 0  # returns are kept, not excluded
 
 
