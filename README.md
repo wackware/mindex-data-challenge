@@ -28,6 +28,10 @@ profile.bat      # Windows — writes output/profiling_report.json
 # 5. Run tests
 test.bat         # Windows
 # or: .venv/bin/pytest tests/ -v
+
+# 6. View results (human-friendly ASCII tables for all 4 output files)
+view.bat         # Windows
+# or: .venv/bin/python scripts/view_output.py
 ```
 
 **Outputs generated:**

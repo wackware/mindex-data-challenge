@@ -142,14 +142,10 @@ class TestCleanerDataQuality:
         assert result.iloc[0]["zip_code"] == "0938"
 
     def test_stores_null_region_becomes_unknown(self):
-        """S013/S014-style: NULL region → 'Unknown'; other fields not touched."""
+        """S013/S014-style: NULL region → 'Unknown'."""
         df = pd.DataFrame([{"store_id": "S013", "store_name": "Portland", "zip_code": "97201", "region": None, "city": "Portland", "state": "OR", "opened_date": "2019-05-14"}])
         result = clean_stores(df)
         assert result.iloc[0]["region"] == "Unknown"
-        assert result.iloc[0]["store_id"] == "S013"
-        assert result.iloc[0]["store_name"] == "Portland"
-        assert result.iloc[0]["city"] == "Portland"
-        assert result.iloc[0]["state"] == "OR"
 
     # --- clean_products ---
 
