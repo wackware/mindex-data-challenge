@@ -77,14 +77,14 @@ tests/test_pipeline.py  ← pytest suite (TDD, 25 tests)
 
 | Issue | File | Count | Decision | Rationale |
 |---|---|---|---|---|
-| Mixed date formats (MM/DD/YYYY and DD-MM-YYYY) | transactions.csv | ~20 | Normalize all to YYYY-MM-DD | Downstream date math requires consistent format; `pd.to_datetime` handles all three variants |
-| String-formatted amounts ("$12.50") | transactions.csv | ~25 | Strip `$`, cast to float | Numeric operations require float; `$` is a display artifact from the source system |
-| Silent discounts (total_amount ≠ qty × unit_price) | transactions.csv | ~20 | Keep actual total_amount; add `has_price_discrepancy` flag | The transaction amount is ground truth for revenue. The discrepancy may be a coupon or override — flagged for review, not discarded |
+| Mixed date formats (MM/DD/YYYY and DD-MM-YYYY) | transactions.csv | 20 | Normalize all to YYYY-MM-DD | Downstream date math requires consistent format; `pd.to_datetime` handles all three variants |
+| String-formatted amounts ("$12.50") | transactions.csv | 25 | Strip `$`, cast to float | Numeric operations require float; `$` is a display artifact from the source system |
+| Silent discounts (total_amount ≠ qty × unit_price) | transactions.csv | 20 | Keep actual total_amount; add `has_price_discrepancy` flag | The transaction amount is ground truth for revenue. The discrepancy may be a coupon or override — flagged for review, not discarded |
 | Orphaned store_ids (S016–S019) | transactions.csv | 5 | Exclude from fact_sales; log to exclusions.json | Cannot dimension without a valid store; including would corrupt store-level analytics |
 | Orphaned product_ids (P031, P032) | transactions.csv | 3 | Exclude from fact_sales; log | Same rationale — referential integrity required for analytics |
 | NULL customer_id (guest transactions) | transactions.csv | 40 | Map to synthetic CUST_GUEST in dim_customer; include in fact_sales | Guest transactions are real revenue. Excluding would skew store/product totals. `is_guest = 1` flag enables filtering in analytics |
 | Zero-quantity rows | transactions.csv | 5 | Exclude from fact_sales | No business event occurred. Including would distort average transaction value |
-| Future-dated rows | transactions.csv | 2 | Exclude from fact_sales; log | Future dates in a historical export are data entry errors. Including would corrupt date-window analytics |
+| Future-dated rows | transactions.csv | 3 injected (count decreases as dates become current) | Exclude from fact_sales; log | Future dates in a historical export are data entry errors. Including would corrupt date-window analytics |
 | Exact duplicate transaction rows (same TXN ID) | transactions.csv | 15 | Deduplicate, keep first | True duplicates from a bad extract. Keeping both would double-count revenue |
 | Return transactions (negative qty + amount) | transactions.csv | 30 | Include with `is_return = 1` flag | Returns are real business events. Net revenue queries use `SUM(total_amount)` which naturally subtracts returns. Excluding would overstate revenue |
 | Near-duplicate store S007 (same ID, two names) | stores.csv | 1 extra row | Keep first; document both names | Cannot have two rows with the same PK in dim_store. Both names refer to the same physical location |

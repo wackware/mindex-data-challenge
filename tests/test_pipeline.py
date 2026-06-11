@@ -130,11 +130,12 @@ class TestCleanerDataQuality:
         assert result.iloc[0]["store_name"] == "Store A"
 
     def test_stores_malformed_zip_kept_with_flag(self):
-        """S003-style: 4-digit zip → row kept, zip_valid=0."""
+        """S003-style: 4-digit zip → row kept, zip_valid=0, original value preserved."""
         df = pd.DataFrame([{"store_id": "S003", "store_name": "Bad Zip", "zip_code": "0938", "region": "South", "city": None, "state": None, "opened_date": None}])
         result = clean_stores(df)
         assert len(result) == 1
         assert result.iloc[0]["zip_valid"] == 0
+        assert result.iloc[0]["zip_code"] == "0938"
 
     def test_stores_null_region_becomes_unknown(self):
         """S013/S014-style: NULL region → 'Unknown'."""
@@ -145,10 +146,12 @@ class TestCleanerDataQuality:
     # --- clean_products ---
 
     def test_products_exact_dup_removed(self):
-        """P012-style: exact duplicate row → deduplicated to one."""
+        """P012-style: exact duplicate row → deduplicated to one, correct row kept."""
         row = {"product_id": "P012", "product_name": "Widget", "category": "Tools", "unit_price": 9.99, "supplier_id": "SUP1"}
         result = clean_products(pd.DataFrame([row, row]))
         assert len(result) == 1
+        assert result.iloc[0]["product_id"] == "P012"
+        assert result.iloc[0]["unit_price"] == pytest.approx(9.99)
 
     def test_products_price_conflict_keeps_last(self):
         """P005-style: same product_id, two prices → keep last (latest catalog price)."""
@@ -167,11 +170,12 @@ class TestCleanerDataQuality:
         assert result.iloc[0]["category"] == "Uncategorized"
 
     def test_products_zero_price_kept_with_flag(self):
-        """P027-style: zero unit_price → row kept, price_is_zero=1."""
+        """P027-style: zero unit_price → row kept, price_is_zero=1, price value preserved."""
         df = pd.DataFrame([{"product_id": "P027", "product_name": "Free Item", "category": "Promo", "unit_price": 0.0, "supplier_id": "SUP1"}])
         result = clean_products(df)
         assert len(result) == 1
         assert result.iloc[0]["price_is_zero"] == 1
+        assert result.iloc[0]["unit_price"] == pytest.approx(0.0)
 
     # --- clean_transactions ---
 
@@ -186,6 +190,7 @@ class TestCleanerDataQuality:
         result, excl = clean_transactions(df, {"S001"}, {"P001"})
         assert len(result) == 1
         assert result.iloc[0]["transaction_id"] == "T1"
+        assert "T2" not in result["transaction_id"].values
         assert any("orphaned_store_id" in e["reason"] for e in excl)
 
     def test_transactions_null_customer_becomes_guest(self):
